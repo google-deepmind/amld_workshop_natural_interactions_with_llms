@@ -73,6 +73,7 @@ def _plot_one_element(
     axes: matplotlib.axes.Axes,
     element: document_editing.Element,
     image_from_id: Mapping[int, Image.Image],
+    show_bboxes: bool = True,
 ):
   """Plots a single element on the given axes.
 
@@ -80,6 +81,8 @@ def _plot_one_element(
       axes: The matplotlib axes to plot on.
       element: The element to plot.
       image_from_id: A mapping from page element ID to images.
+      show_bboxes: Whether to show the bounding boxes of the elements or just
+        their content.
   """
   rect_kwargs = {"fill": False, "zorder": 1, "linewidth": 1, "alpha": 0.3}
   if element.class_name == "paragraph":
@@ -114,13 +117,14 @@ def _plot_one_element(
     )
     rect_kwargs.update({"color": "red"})
 
-  rect = matplotlib.patches.Rectangle(
-      (element.bbox.left, element.bbox.top),
-      element.bbox.width,
-      element.bbox.height,
-      **rect_kwargs,
-  )
-  axes.add_patch(rect)
+  if show_bboxes or element.color:
+    rect = matplotlib.patches.Rectangle(
+        (element.bbox.left, element.bbox.top),
+        element.bbox.width,
+        element.bbox.height,
+        **rect_kwargs,
+    )
+    axes.add_patch(rect)
 
 
 def _plot_one_bbox(
@@ -188,6 +192,7 @@ def render_document(
     overlay_bboxes: Mapping[str, document_editing.BoundingBox] | None = None,
     ink: document_editing.Ink | None = None,
     crop_area: document_editing.BoundingBox | bool = False,
+    show_bboxes: bool = True,
 ) -> DocumentRender:
   """Returns a rendering of a page with its elements, images, and ink gesture.
 
@@ -203,6 +208,8 @@ def render_document(
         consisting of the ink, any element with a color attribute and any
         provided overlay bounding box. If set to a BoundingBox, crops the final
         image around this bounding box.
+      show_bboxes: Whether to show the bounding boxes of the elements or just
+        their content.
   """
   plt.ioff()
   fig = plt.figure(frameon=False)
@@ -238,7 +245,7 @@ def render_document(
     extent = extent.union(element.bbox)
     if crop_area and element.bbox.intersection(visible_area).area < 0.001:
       continue
-    _plot_one_element(axes, element, page.image_from_id)
+    _plot_one_element(axes, element, page.image_from_id, show_bboxes)
 
   if overlay_bboxes:
     for color, bbox in overlay_bboxes.items():

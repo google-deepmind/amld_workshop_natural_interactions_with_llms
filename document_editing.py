@@ -18,6 +18,7 @@
 import copy
 import dataclasses
 import functools
+import glob
 import io
 import itertools
 import json
@@ -28,7 +29,8 @@ from typing import Collection, Mapping, Sequence
 from PIL import Image
 
 _BACKGROUND_IMAGE_ID = -1
-_BBOX_CHARACTER_WIDTH = 7
+_BBOX_CHARACTER_HEIGHT = 11
+_BBOX_CHARACTER_WIDTH = 7.5
 _BBOX_MARGIN_WORD = 5
 _ELEMENT_CHANGED_COLOR = 'fuchsia'
 
@@ -221,6 +223,18 @@ class Ink:
   def get_stroke_lengths(self) -> Sequence[float]:
     """Returns the length of each stroke in the ink."""
     return list(map(len, [s.xs for s in self.strokes]))
+
+
+def _estimate_character_width(character: str) -> float:
+  """Estimates the width of a character when rendered on the canvas."""
+  if character in "1iIlt:.,;'()":
+    return _BBOX_CHARACTER_WIDTH * 0.8
+  return _BBOX_CHARACTER_WIDTH
+
+
+def _estimate_text_width(text: str) -> float:
+  """Estimates the width of a text when rendered on the canvas."""
+  return sum(_estimate_character_width(character) for character in text)
 
 
 @dataclasses.dataclass
@@ -503,22 +517,25 @@ class Page:
 
     This function identifies elements that overlap with the given bounding box,
     deletes them, and adjusts the positions of the remaining elements to
-    maintain
-    the document structure.
+    maintain the document structure.
 
     Args:
       bbox: The bounding box to delete elements from.
     """
-    overlapping_elements = self._elements_under_bbox(
+    overlapping_words = []
+    for overlapping_element in self._elements_under_bbox(
         bbox, class_names={'word', 'image'}
-    )
-    if not overlapping_elements:
-      return
+    ):
+      # Delete images directly as they are not affected by reflow.
+      if overlapping_element.class_name == 'image':
+        self.delete_element(overlapping_element.id)
+      else:
+        overlapping_words.append(overlapping_element)
 
     # Determines the amount to shift words for each line separately.
     root_ancestor_ids = set()
-    sorted_overlapping_elements = sorted(
-        overlapping_elements,
+    sorted_overlapping_words = sorted(
+        overlapping_words,
         key=lambda element: (
             # Sort first by line, bottom to top, then by word left to right.
             -self.element_from_id[element.parent_id].bbox.top,
@@ -526,7 +543,7 @@ class Page:
         ),
     )
     for _, elements in itertools.groupby(
-        sorted_overlapping_elements, lambda element: element.parent_id
+        sorted_overlapping_words, lambda element: element.parent_id
     ):
       elements = list(elements)
       next_element = self.element_from_id.get(elements[-1].next_id)
@@ -534,14 +551,11 @@ class Page:
       union_bbox = functools.reduce(
           lambda bbox1, bbox2: bbox1.union(bbox2), bboxes
       )
-      if next_element and next_element not in overlapping_elements:
-        self.shift_words(
-            next_element,
-            -(next_element.bbox.left - union_bbox.left),
-        )
       for element in elements:
         root_ancestor_ids.add(self._get_root_ancestor_id(element))
         self.delete_element(element.id)
+      if next_element and next_element not in overlapping_words:
+        self.shift_words(next_element, -union_bbox.width)
 
     # Adjust the bounding boxes of parents that have been affected by deletion.
     for root_ancestor_id in root_ancestor_ids:
@@ -612,7 +626,7 @@ class Page:
         parent_id=closest_element.parent_id,
         text=word_text,
     )
-    word_width = _BBOX_CHARACTER_WIDTH * len(word_text)
+    word_width = _estimate_text_width(word_text)
 
     # Determine the target element for linking and shifting
     if insert_before:
@@ -716,6 +730,32 @@ class Page:
     elif edit_name == 'crop':
       self.crop_image(edit_bbox)
 
+  def tighten_bboxes_for_colab_canvas(self):
+    """Tightens the bounding boxes of the elements.
+
+    Use this function to tighten the bounding boxes of the elements to better
+    reflect their size when they are rendered with `rendering.render_document`.
+    By default, the bounding boxes are set to the size of the text in the
+    original image from which OCR results were extracted. However, this is not
+    suitable for the interactive canvas in the notebook, which displays the
+    elements at a smaller size than the original image.
+    """
+    for element in self.element_from_id.values():
+      if element.class_name == 'word':
+        element.bbox = BoundingBox(
+            top=element.bbox.top,
+            left=element.bbox.left,
+            bottom=element.bbox.top + _BBOX_CHARACTER_HEIGHT,
+            right=min(
+                element.bbox.right,
+                element.bbox.left + _estimate_text_width(element.text),
+            ),
+        )
+
+    for element in self.element_from_id.values():
+      if element.class_name == 'paragraph':
+        self.recompute_bbox(element.id)
+
 
 def load_page(base_dir: str, page_id: str) -> Page:
   """Reads a page from the pages directory."""
@@ -727,7 +767,7 @@ def load_page(base_dir: str, page_id: str) -> Page:
     }
 
   image_from_id = {}
-  for image_path in open(os.path.join(base_dir, page_id, '*.png')):
+  for image_path in glob.glob(os.path.join(base_dir, page_id, '*.png')):
     if 'background' in image_path:
       image_id = _BACKGROUND_IMAGE_ID
     else:

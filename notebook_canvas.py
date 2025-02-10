@@ -18,7 +18,9 @@
 import base64
 import copy
 import io
+from typing import Callable
 
+import data_processing
 import document_editing
 from google.colab import output
 from IPython import display
@@ -28,19 +30,29 @@ import rendering
 _CANVAS_HTML = """
 <style>
   #drawCanvas {{
-    border: 2px solid black;
+    border: 1px solid lightgrey;
     cursor: crosshair;
   }}
+  #modelOutput {{
+    border: 1px solid lightgrey;
+    margin-left: 10px;
+  }}
   #container {{
-    position: relative;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
   }}
 </style>
-<button id="resetButton">Reset document</button>
-<button id="clearButton">Clear ink</button>
-<button id="interpretButton">Interpret</button>
-<span id="status"></span>
 <div id="container">
-    <canvas id="drawCanvas" width="{width}" height="{height}"></canvas>
+    <canvas id="drawCanvas"></canvas>
+    <div id="modelOutput">
+      <b>Controls:</b>
+      <button id="resetButton">Reset document</button>
+      <button id="clearButton">Clear ink</button>
+      <button id="interpretButton">Interpret</button><br>
+      <b>Status:</b> <span id="status"></span><br>
+      <b>Model output:</b> <span id="modelOutputText"></span><br><img id="modelOutputImage" src="" width="300">
+    </div>
 </div>
 <script>
     const canvas = document.getElementById('drawCanvas');
@@ -62,7 +74,6 @@ _CANVAS_HTML = """
     }}
 
     function setBackgroundImage(imageData) {{
-      console.log(imageData);
       image.src = imageData;
       image.onload = () => {{
         // Redraw the background image and any existing drawing
@@ -74,6 +85,14 @@ _CANVAS_HTML = """
 
         drawBackgroundImage(image);
       }};
+    }}
+
+    function setModelOutput(text, imageData) {{
+      const modelOutputText = document.getElementById('modelOutputText');
+      modelOutputText.textContent = text;
+
+      const modelOutputImage = document.getElementById('modelOutputImage');
+      modelOutputImage.src = imageData;
     }}
 
     canvas.addEventListener('mousedown', (e) => {{
@@ -159,20 +178,30 @@ class Canvas:
   def __init__(
       self,
       document: document_editing.Page,
-      canvas_width: int = 600,
-      canvas_height: int = 600,
+      predict_fn: Callable[
+          [document_editing.Ink, Image.Image],
+          data_processing.DocumentEditingLabel,
+      ],
+      canvas_max_width: int = 600,
+      canvas_max_height: int = 600,
   ):
-    self._canvas_width = canvas_width
-    self._canvas_height = canvas_height
+    self._canvas_max_width = canvas_max_width
+    self._canvas_max_height = canvas_max_height
     self._original_document = document
     self._document = copy.deepcopy(document)
     self._document_extent = document_editing.BoundingBox(
         top=0, left=0, bottom=0, right=0
     )
+    self._predict_fn = predict_fn
 
   def _render_document_on_canvas(self):
     """Renders the current document and update the canvas background."""
-    rendered_document = rendering.render_document(self._document)
+    rendered_document = rendering.render_document(
+        self._document, show_bboxes=False
+    )
+    rendered_document.image.thumbnail(
+        (self._canvas_max_width, self._canvas_max_height)
+    )
     self._document_extent = rendered_document.extent
     _display_javascript(
         "window.setBackgroundImage("
@@ -198,19 +227,26 @@ class Canvas:
       strokes.append(document_editing.Stroke(xs=xs, ys=ys))
     ink = document_editing.Ink(strokes=strokes)
 
-    # Convert the ink back to image space.
+    if not ink.strokes:
+      _display_status("Empty ink, nothing to interpret.")
+      return
+
+    prediction = self._predict_fn(ink, image)
+
+    # Convert the bounding box to document coordinates.
     scale = self._document_extent.width / image.width
-    ink_bbox = ink.get_bbox()
-    bbox = document_editing.BoundingBox(
-        self._document_extent.top + ink_bbox.top * scale,
-        self._document_extent.left + ink_bbox.left * scale,
-        self._document_extent.top + ink_bbox.bottom * scale,
-        self._document_extent.left + ink_bbox.right * scale,
+    prediction.bbox = document_editing.BoundingBox(
+        self._document_extent.top + prediction.bbox.top * scale,
+        self._document_extent.left + prediction.bbox.left * scale,
+        self._document_extent.top + prediction.bbox.bottom * scale,
+        self._document_extent.left + prediction.bbox.right * scale,
     )
 
-    # Fake edit on the document. This will be replaced by the actual model
-    # interpretation.
-    self._document.edit(edit_name="select", edit_bbox=bbox)
+    self._document.edit(
+        edit_name=prediction.gesture,
+        edit_bbox=prediction.bbox,
+        text=prediction.text,
+    )
     self._render_document_on_canvas()
     _display_status("")
 
@@ -221,7 +257,7 @@ class Canvas:
     self._render_document_on_canvas()
     _display_status("")
 
-  def display_interaction_widget(self, width=600, height=600):
+  def display_interaction_widget(self):
     """Displays the interaction widget."""
     output.register_callback(
         "notebook.InterpretDrawing", self._interpret_gesture
@@ -229,13 +265,6 @@ class Canvas:
     output.register_callback("notebook.ResetDocument", self._reset_document)
 
     display.display(
-        display.HTML(
-            _CANVAS_HTML.format(
-                width=width,
-                height=height,
-                color="#FF0000",
-                line_width=3,
-            )
-        )
+        display.HTML(_CANVAS_HTML.format(color="#FF0000", line_width=3))
     )
     self._render_document_on_canvas()

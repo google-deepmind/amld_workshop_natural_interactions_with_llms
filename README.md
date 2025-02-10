@@ -22,6 +22,8 @@ fine-tuned PaliGemma 2 has used ink data from
 [IAM-OnDB](https://fki.tic.heia-fr.ch/databases/iam-handwriting-database)\[1\],
 and standard Wikipedia pages as documents.
 
+Help us improve! Share your feedback on the workshop by using this [form](https://forms.gle/RQMvfcD4PaCv3HVv7).
+
 \[1\] U. Marti and H. Bunke. The IAM-database: An English Sentence Database for
 Off-line Handwriting Recognition. Int. Journal on Document Analysis and
 Recognition, Volume 5, pages 39 - 46, 2002.
