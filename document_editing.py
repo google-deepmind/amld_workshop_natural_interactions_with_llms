@@ -68,16 +68,6 @@ class BoundingBox:
   right: float
 
   def __init__(self, top: float, left: float, bottom: float, right: float):
-    if left > right:
-      raise ValueError(
-          f'Left edge must be to the left of the right edge but got left={left}'
-          f' and right={right}'
-      )
-    if top > bottom:
-      raise ValueError(
-          f'Top edge must be above the bottom edge but got top={top} and'
-          f' bottom={bottom}'
-      )
     self.top = top
     self.left = left
     self.bottom = bottom
@@ -706,6 +696,43 @@ class Page:
       ))
       image_element.bbox = cropped_bbox
 
+  def _word_under_point(self, point: Point) -> Element | None:
+    """Returns the word element located under a given point."""
+    for element in self.element_from_id.values():
+      if element.class_name != 'word':
+        continue
+      if (
+          element.bbox.left <= point.x <= element.bbox.right
+          and element.bbox.top <= point.y <= element.bbox.bottom
+      ):
+        return element
+
+  def swap_words(self, first_location: Point, second_location: Point):
+    """Swaps two words in the document."""
+    word_at_first_location = self._word_under_point(first_location)
+    word_at_second_location = self._word_under_point(second_location)
+
+    if word_at_first_location is None or word_at_second_location is None:
+      return
+
+    word_at_first_location.text, word_at_second_location.text = (
+        word_at_second_location.text,
+        word_at_first_location.text,
+    )
+
+    # Reflow the words to account for the change in width.
+    size_difference = (
+        word_at_first_location.bbox.width - word_at_second_location.bbox.width
+    )
+    self.shift_words(
+        self.element_from_id.get(word_at_first_location.next_id),
+        -size_difference,
+    )
+    self.shift_words(
+        self.element_from_id.get(word_at_second_location.next_id),
+        size_difference,
+    )
+
   def edit(self, edit_name: str, edit_bbox: BoundingBox, text: str = ''):
     """Edits the page according to the given class name and bbox.
 
@@ -729,6 +756,12 @@ class Page:
       self.delete_elements_under_bbox(edit_bbox)
     elif edit_name == 'crop':
       self.crop_image(edit_bbox)
+    elif edit_name == 'point':
+      # We assume that the arrow endpoints are stored in the top-left and
+      # bottom-right coordinates of the bounding box.
+      first_location = Point(x=edit_bbox.left, y=edit_bbox.top)
+      second_location = Point(x=edit_bbox.right, y=edit_bbox.bottom)
+      self.swap_words(first_location, second_location)
 
   def tighten_bboxes_for_colab_canvas(self):
     """Tightens the bounding boxes of the elements.
