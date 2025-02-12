@@ -56,17 +56,16 @@ _CANVAS_HTML = """
 </div>
 <script>
     const canvas = document.getElementById('drawCanvas');
-    let ctx = null;
+    let ctx = canvas.getContext('2d');
     let drawing = false;
     let image = new Image();
     let drawingCoordinates = [];
 
-    function setUpContext() {{
-      ctx = canvas.getContext('2d');
-      ctx.strokeStyle = '{color}';
-      ctx.lineWidth = {line_width};
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+    function setUpContext(context) {{
+      context.strokeStyle = '{color}';
+      context.lineWidth = {line_width};
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
     }}
 
     function drawBackgroundImage() {{
@@ -143,8 +142,25 @@ _CANVAS_HTML = """
       tempCanvas.width = canvas.width;
       tempCanvas.height = canvas.height;
 
-      // Draw the drawing on top
-      tempCtx.drawImage(canvas, 0, 0);
+      // Background image.
+      tempCtx.drawImage(image, 0, 0);
+
+      // White interlayer.
+      tempCtx.globalAlpha = 0.5;
+      tempCtx.fillStyle = 'white';
+      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      tempCtx.globalAlpha = 1;
+
+      // Gesture on top.
+      for (const stroke of drawingCoordinates) {{
+        tempCtx.beginPath();
+        tempCtx.lineTo(stroke[0][0], stroke[0][1]);
+        for (let i = 1; i < stroke.length; i++) {{
+          const [x, y] = stroke[i];
+          tempCtx.lineTo(x, y); // Draw a line to the current point
+        }}
+        tempCtx.stroke();
+      }}
 
       const imageData = tempCanvas.toDataURL();
       google.colab.kernel.invokeFunction('notebook.InterpretDrawing', [imageData, drawingCoordinates], {{}});
