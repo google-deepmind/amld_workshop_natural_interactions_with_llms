@@ -80,7 +80,7 @@ _CANVAS_HTML = """
 
         canvas.height = image.height;
         canvas.width = image.width;
-        setUpContext();
+        setUpContext(ctx);
 
         drawBackgroundImage(image);
       }};
@@ -152,6 +152,7 @@ _CANVAS_HTML = """
       tempCtx.globalAlpha = 1;
 
       // Gesture on top.
+      setUpContext(tempCtx);
       for (const stroke of drawingCoordinates) {{
         tempCtx.beginPath();
         tempCtx.lineTo(stroke[0][0], stroke[0][1]);
@@ -172,7 +173,7 @@ _CANVAS_HTML = """
       google.colab.kernel.invokeFunction('notebook.ResetDocument', [], {{}});
     }});
 
-    setUpContext();
+    setUpContext(ctx);
     google.colab.output.setIframeHeight(0, true, {{maxHeight: 5000}});
 </script>
 """
