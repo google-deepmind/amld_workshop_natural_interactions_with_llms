@@ -18,6 +18,7 @@
 import abc
 from collections.abc import Callable
 import io
+import time
 from typing import Any, Iterator
 
 import data_processing
@@ -106,6 +107,7 @@ def infer_fewshot(
     normalize_fn: (
         Callable[[dict[str, Any]], float | tuple[float, float]] | None
     ) = None,
+    rpm: float = 15,
 ) -> tuple[
     list[data_processing.DocumentEditingLabel | None],
     list[data_processing.DocumentEditingLabel | None],
@@ -120,6 +122,7 @@ def infer_fewshot(
     normalize_fn: A function that returns a normalization factor for locations
       in a given example. Either a single float for both x and y or a tuple of
       two floats for x and y.
+    rpm: The number of requests per minute to limit the inference rate to.
 
   Returns:
     The predictions and targets.
@@ -131,6 +134,7 @@ def infer_fewshot(
       prompter.iterate(dataset), total=len(dataset), disable=not progress
   ):
     try:
+      start_time = time.time()
       output = inference_fn(prompt)
       target = example["label"].decode()
       predicted_label = data_processing.DocumentEditingLabel.from_output(
@@ -143,6 +147,10 @@ def infer_fewshot(
       )
       predictions.append(predicted_label)
       targets.append(expected_label)
+      end_time = time.time()
+      sleep_time = (60 / rpm) - (end_time - start_time)
+      if sleep_time > 0:
+        time.sleep(sleep_time)
     except KeyboardInterrupt:
       break
   return targets, predictions
