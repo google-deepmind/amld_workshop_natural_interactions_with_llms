@@ -19,14 +19,17 @@ import base64
 import dataclasses
 import functools
 import io
+import math
 from typing import Mapping, Sequence
 
+import cairo
 import document_editing
 import matplotlib
 import matplotlib.pyplot as plt
 import paligemma_tools
 from PIL import Image
 
+_OVERLAY_COLOR = (255, 255, 255, 127)
 _FIGURE_MAX_HEIGHT_INCHES = 16
 _FIGURE_MAX_WIDTH_INCHES = 16
 _FIGURE_DPI = 80
@@ -381,3 +384,63 @@ def ink_to_image_space(
     scaled_strokes.append(document_editing.Stroke(xs=xs, ys=ys))
 
   return document_editing.Ink(strokes=scaled_strokes)
+
+
+def pil_to_cairo(
+    image: Image.Image,
+    alpha: float = 1.0,
+) -> cairo.ImageSurface:
+  """Converts a PIL image into a cairo surface."""
+  if "A" not in image.getbands():
+    image.putalpha(int(alpha * 256.0))
+  arr = bytearray(image.tobytes("raw", "BGRA"))
+  surface = cairo.ImageSurface.create_for_data(
+      arr, cairo.FORMAT_ARGB32, image.width, image.height
+  )
+  return surface
+
+
+def cairo_to_pil(surface: cairo.ImageSurface) -> Image.Image:
+  """Converts a cairo surface into a PIL image."""
+  size = (surface.get_width(), surface.get_height())
+  stride = surface.get_stride()
+  with surface.get_data() as memory:
+    return Image.frombuffer(
+        "RGBA", size, memory.tobytes(), "raw", "BGRA", stride
+    )
+
+
+def render_ink_on_image(
+    ink: document_editing.Ink,
+    image: Image.Image,
+    color: tuple[float, ...] = (1.0, 0.0, 0.0),
+    stroke_width: float = 1.5,
+    add_semi_transparent_overlay: bool = False,
+) -> Image.Image:
+  """Renders an ink on top of a PIL image."""
+
+  if add_semi_transparent_overlay:
+    image = image.convert("RGBA")
+    overlay = Image.new("RGBA", image.size, _OVERLAY_COLOR)
+    image = Image.alpha_composite(image, overlay)
+    image = image.convert("RGB")
+
+  surface = pil_to_cairo(image)
+
+  ctx = cairo.Context(surface)
+  ctx.set_source_rgb(*color)
+  ctx.set_line_width(stroke_width)
+  ctx.set_line_cap(cairo.LineCap.ROUND)
+  ctx.set_line_join(cairo.LineJoin.ROUND)
+
+  for stroke in ink.strokes:
+    if len(stroke.xs) == 1:
+      ctx.arc(stroke.xs[0], stroke.ys[0], stroke_width / 2, 0, 2 * math.pi)
+      ctx.fill()
+    elif len(stroke.xs) > 1:
+      ctx.move_to(stroke.xs[0], stroke.ys[0])
+      for x, y in zip(stroke.xs[1:], stroke.ys[1:]):
+        ctx.line_to(x, y)
+      ctx.stroke()
+
+  return cairo_to_pil(surface)
