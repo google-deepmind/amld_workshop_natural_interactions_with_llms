@@ -15,9 +15,7 @@
 
 """Interactive canvas for experimenting with gesture recognition."""
 
-import base64
 import copy
-import io
 from typing import Callable
 
 import data_processing
@@ -33,7 +31,7 @@ _CANVAS_HTML = """
     border: 1px solid lightgrey;
     cursor: crosshair;
   }}
-  #modelOutput {{
+  #debugOutput {{
     border: 1px solid lightgrey;
     margin-left: 10px;
   }}
@@ -45,13 +43,13 @@ _CANVAS_HTML = """
 </style>
 <div id="container">
     <canvas id="drawCanvas"></canvas>
-    <div id="modelOutput">
+    <div id="debugOutput">
       <b>Controls:</b>
       <button id="resetButton">Reset document</button>
       <button id="clearButton">Clear ink</button>
       <button id="interpretButton">Interpret</button><br>
       <b>Status:</b> <span id="status"></span><br>
-      <b>Model output:</b> <span id="modelOutputText"></span><br><img id="modelOutputImage" src="" width="300">
+      <b>Model output:</b> <span id="debugOutputText"></span><br><img id="debugOutputImage" src="" width="300">
     </div>
 </div>
 <script>
@@ -86,12 +84,12 @@ _CANVAS_HTML = """
       }};
     }}
 
-    function setModelOutput(text, imageData) {{
-      const modelOutputText = document.getElementById('modelOutputText');
-      modelOutputText.textContent = text;
+    function setDebugOutput(text, imageData) {{
+      const debugOutputText = document.getElementById('debugOutputText');
+      debugOutputText.textContent = text;
 
-      const modelOutputImage = document.getElementById('modelOutputImage');
-      modelOutputImage.src = imageData;
+      const debugOutputImage = document.getElementById('debugOutputImage');
+      debugOutputImage.src = imageData;
     }}
 
     canvas.addEventListener('mousedown', (e) => {{
@@ -136,35 +134,8 @@ _CANVAS_HTML = """
     }});
 
     document.getElementById('interpretButton').addEventListener('click', function() {{
-      // Create a temporary canvas to combine background and drawing.
-      const tempCanvas = document.createElement('canvas');
-      const tempCtx = tempCanvas.getContext('2d');
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
-
-      // Background image.
-      tempCtx.drawImage(image, 0, 0);
-
-      // White interlayer.
-      tempCtx.globalAlpha = 0.5;
-      tempCtx.fillStyle = 'white';
-      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-      tempCtx.globalAlpha = 1;
-
-      // Gesture on top.
-      setUpContext(tempCtx);
-      for (const stroke of drawingCoordinates) {{
-        tempCtx.beginPath();
-        tempCtx.lineTo(stroke[0][0], stroke[0][1]);
-        for (let i = 1; i < stroke.length; i++) {{
-          const [x, y] = stroke[i];
-          tempCtx.lineTo(x, y); // Draw a line to the current point
-        }}
-        tempCtx.stroke();
-      }}
-
-      const imageData = tempCanvas.toDataURL();
-      google.colab.kernel.invokeFunction('notebook.InterpretDrawing', [imageData, drawingCoordinates], {{}});
+      setStatus('Sending ink for interpretation... ⏳');
+      google.colab.kernel.invokeFunction('notebook.InterpretDrawing', [drawingCoordinates], {{}});
       drawingCoordinates = [];
     }});
 
@@ -189,6 +160,11 @@ def _display_status(status: str):
   _display_javascript(f"window.setStatus('{status}');")
 
 
+def set_debug_output(text: str, image_data: str):
+  """Displays the provided debug output in side panel."""
+  _display_javascript(f"window.setDebugOutput('{text}', '{image_data}');")
+
+
 class Canvas:
   """Interactive canvas for experimenting with gesture recognition."""
 
@@ -206,32 +182,25 @@ class Canvas:
     self._canvas_max_height = canvas_max_height
     self._original_document = document
     self._document = copy.deepcopy(document)
-    self._document_extent = document_editing.BoundingBox(
-        top=0, left=0, bottom=0, right=0
-    )
     self._predict_fn = predict_fn
+    self._rendered_document = None
 
   def _render_document_on_canvas(self):
     """Renders the current document and update the canvas background."""
-    rendered_document = rendering.render_document(
+    self._rendered_document = rendering.render_document(
         self._document, show_bboxes=False
     )
-    rendered_document.image.thumbnail(
+    self._rendered_document.image.thumbnail(
         (self._canvas_max_width, self._canvas_max_height)
     )
-    self._document_extent = rendered_document.extent
     _display_javascript(
         "window.setBackgroundImage("
-        f"'{rendering.to_data_url(rendered_document.image)}');"
+        f"'{rendering.to_data_url(self._rendered_document.image)}');"
     )
 
-  def _interpret_gesture(self, image_data, coordinates):
+  def _interpret_gesture(self, coordinates):
     """Interprets the user's gesture and update the underlying document."""
     _display_status("Interpreting... ⏳")
-
-    image_data = image_data.split(",")[1]
-    decoded_data = base64.b64decode(image_data)
-    image = Image.open(io.BytesIO(decoded_data))
 
     # Interpret the gesture
     strokes = []
@@ -248,15 +217,16 @@ class Canvas:
       _display_status("Empty ink, nothing to interpret.")
       return
 
-    prediction = self._predict_fn(ink, image)
+    rendered_document = self._rendered_document
+    prediction = self._predict_fn(ink, rendered_document.image)
 
     # Convert the bounding box to document coordinates.
-    scale = self._document_extent.width / image.width
+    scale = rendered_document.extent.width / rendered_document.image.width
     prediction.bbox = document_editing.BoundingBox(
-        self._document_extent.top + prediction.bbox.top * scale,
-        self._document_extent.left + prediction.bbox.left * scale,
-        self._document_extent.top + prediction.bbox.bottom * scale,
-        self._document_extent.left + prediction.bbox.right * scale,
+        rendered_document.extent.top + prediction.bbox.top * scale,
+        rendered_document.extent.left + prediction.bbox.left * scale,
+        rendered_document.extent.top + prediction.bbox.bottom * scale,
+        rendered_document.extent.left + prediction.bbox.right * scale,
     )
 
     self._document.edit(
@@ -264,6 +234,7 @@ class Canvas:
         edit_bbox=prediction.bbox,
         text=prediction.text,
     )
+    _display_status("Rendering document... ⏳")
     self._render_document_on_canvas()
     _display_status("")
 
