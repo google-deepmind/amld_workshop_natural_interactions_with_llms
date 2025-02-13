@@ -372,7 +372,12 @@ class Page:
         lambda bbox1, bbox2: bbox1.union(bbox2), children_bboxes
     )
 
-  def shift_words(self, word: Element | None, shift_amount: float):
+  def shift_words(
+      self,
+      word: Element | None,
+      shift_amount: float,
+      highlight_modified_words: bool = True,
+  ):
     """Shifts a word horizontally and reflows the surrounding text as needed.
 
     This function shifts a word horizontally within its paragraph, handling
@@ -383,12 +388,16 @@ class Page:
     Args:
       word: The word element to shift.
       shift_amount: The amount to shift the word horizontally.
+      highlight_modified_words: Whether to highlight words that were modified by
+        the shifting operation.
     """
     if word is None:
       return
 
     # Mark this element as being altered so that we can visualize it later.
-    word.color = _ELEMENT_CHANGED_COLOR
+    if highlight_modified_words:
+      word.color = _ELEMENT_CHANGED_COLOR
+
     line = self.element_from_id[word.parent_id]
     paragraph = self.element_from_id[line.parent_id]
     next_word = self.element_from_id.get(word.next_id)
@@ -404,7 +413,7 @@ class Page:
         # If the next word is on the same line, it will overflow too so we push
         # it first.
         if next_word.parent_id == word.parent_id:
-          self.shift_words(next_word, shift_amount)
+          self.shift_words(next_word, shift_amount, highlight_modified_words)
 
         word.parent_id = next_word.parent_id
         self.element_from_id[word.parent_id].children_ids.append(word.id)
@@ -416,7 +425,9 @@ class Page:
             right=next_word.bbox.left + word_width,
             bottom=next_word.bbox.top + word_height,
         )
-        self.shift_words(next_word, word_width + _BBOX_MARGIN_WORD)
+        self.shift_words(
+            next_word, word_width + _BBOX_MARGIN_WORD, highlight_modified_words
+        )
       else:
         # We reached the end of a line so we create a new one.
         word.bbox = BoundingBox(
@@ -437,7 +448,11 @@ class Page:
       if not prev_word:
         # This word is the first word of the paragraph, we clamp it to the side
         # of the paragraph.
-        self.shift_words(word, -max(0, word.bbox.left - paragraph.bbox.left))
+        self.shift_words(
+            word,
+            -max(0, word.bbox.left - paragraph.bbox.left),
+            highlight_modified_words,
+        )
         return
 
       if (
@@ -449,7 +464,7 @@ class Page:
         new_shift_amount = -(word.bbox.left - paragraph.bbox.left)
         word.bbox.left = paragraph.bbox.left
         word.bbox.right = word.bbox.left + word_width
-        self.shift_words(next_word, new_shift_amount)
+        self.shift_words(next_word, new_shift_amount, highlight_modified_words)
       else:
         # Move the word to the line above it.
         line.children_ids.remove(word.id)
@@ -465,7 +480,9 @@ class Page:
 
         if next_word:
           new_shift_amount = -(next_word.bbox.left - paragraph.bbox.left + 1)
-          self.shift_words(next_word, new_shift_amount)
+          self.shift_words(
+              next_word, new_shift_amount, highlight_modified_words
+          )
         else:
           # The parent is now empty, we delete it.
           self.delete_element(line.id)
@@ -479,7 +496,7 @@ class Page:
           and next_word.parent_id == word.parent_id
           or shift_amount < 0
       ):
-        self.shift_words(next_word, shift_amount)
+        self.shift_words(next_word, shift_amount, highlight_modified_words)
 
   def _elements_under_bbox(
       self,
@@ -715,22 +732,35 @@ class Page:
     if word_at_first_location is None or word_at_second_location is None:
       return
 
+    word_at_first_location.color = _ELEMENT_CHANGED_COLOR
+    word_at_second_location.color = _ELEMENT_CHANGED_COLOR
+
+    # Reflow the words to account for the change in width.
+    word_width_at_first_location = word_at_first_location.bbox.width
+    word_width_at_second_location = word_at_second_location.bbox.width
+    size_difference = (
+        word_width_at_first_location - word_width_at_second_location
+    )
     word_at_first_location.text, word_at_second_location.text = (
         word_at_second_location.text,
         word_at_first_location.text,
     )
-
-    # Reflow the words to account for the change in width.
-    size_difference = (
-        word_at_first_location.bbox.width - word_at_second_location.bbox.width
+    word_at_first_location.bbox.right = (
+        word_at_first_location.bbox.left + word_width_at_second_location
     )
+    word_at_second_location.bbox.right = (
+        word_at_second_location.bbox.left + word_width_at_first_location
+    )
+
     self.shift_words(
         self.element_from_id.get(word_at_first_location.next_id),
         -size_difference,
+        highlight_modified_words=False,
     )
     self.shift_words(
         self.element_from_id.get(word_at_second_location.next_id),
         size_difference,
+        highlight_modified_words=False,
     )
 
   def edit(self, edit_name: str, edit_bbox: BoundingBox, text: str = ''):
