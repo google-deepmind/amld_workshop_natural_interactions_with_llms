@@ -713,21 +713,34 @@ class Page:
       ))
       image_element.bbox = cropped_bbox
 
-  def _word_under_point(self, point: Point) -> Element | None:
-    """Returns the word element located under a given point."""
+  def _word_nearby_point(
+      self, point: Point, max_allowed_distance=30.0
+  ) -> Element | None:
+    """Returns the closest word element located nearby a given point."""
+    closest_element = None
+    current_min_distance = math.inf
     for element in self.element_from_id.values():
       if element.class_name != 'word':
         continue
-      if (
-          element.bbox.left <= point.x <= element.bbox.right
-          and element.bbox.top <= point.y <= element.bbox.bottom
-      ):
-        return element
+      element_closest_x = element.bbox.left
+      if point.x > element_closest_x:
+        element_closest_x = min(element.bbox.right, point.x)
+      element_closest_y = element.bbox.top
+      if point.y > element_closest_y:
+        element_closest_y = min(element.bbox.bottom, point.y)
+      distance = math.sqrt(
+          (element_closest_x - point.x) ** 2
+          + (element_closest_y - point.y) ** 2
+      )
+      if distance < max_allowed_distance and distance < current_min_distance:
+        current_min_distance = distance
+        closest_element = element
+    return closest_element
 
   def swap_words(self, first_location: Point, second_location: Point):
     """Swaps two words in the document."""
-    word_at_first_location = self._word_under_point(first_location)
-    word_at_second_location = self._word_under_point(second_location)
+    word_at_first_location = self._word_nearby_point(first_location)
+    word_at_second_location = self._word_nearby_point(second_location)
 
     if word_at_first_location is None or word_at_second_location is None:
       return
